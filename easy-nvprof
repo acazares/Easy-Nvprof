@@ -1,0 +1,123 @@
+#!/bin/bash
+
+### Functions ###
+
+efficiency() 
+{
+    if [ -z "$1" ]; then # if no options were given, print all efficiency
+	METRICS="$METRICS",gld_efficiency,gst_efficiency,warp_nonpred_execution_efficiency,warp_execution_efficiency,sm_efficiency,shared_efficiency
+    else # else go through each option and add the metrics accordingly
+	IFS="," read -a opts <<< "$1"
+	for option in "${opts[@]}"
+	do
+	    case "$option" in
+		gmem) METRICS="$METRICS",gld_efficiency,gst_efficiency;;
+		smem)  METRICS="$METRICS",shared_efficiency;;
+		wcomp)  METRICS="$METRICS",sm_efficiency;;
+		tcomp)  METRICS="$METRICS",warp_nonpred_execution_efficiency,warp_execution_efficiency;;
+		all)  METRICS="$METRICS",gld_efficiency,gst_efficiency,warp_nonpred_execution_efficiency,warp_execution_efficiency,sm_efficiency,shared_efficiency;;
+	    esac
+	done
+    fi
+}
+
+
+utilization()
+{
+    if [ -z "$1" ]; then # if no options were given, print all utilization
+	METRICS="$METRICS",ldst_fu_utilization,alu_fu_utilization,cf_fu_utilization,tex_fu_utilization,l1_shared_utilization,l2_utilization,tex_utilization,dram_utilization,sysmem_utilization
+    else # else go through each option and add the metrics accordingly
+	IFS="," read -a opts <<< "$1"
+	for option in "${opts[@]}"
+	do
+	    case "$option" in
+		comp) METRICS="$METRICS",ldst_fu_utilization,alu_fu_utilization,cf_fu_utilization,tex_fu_utilization;;
+		mem)  METRICS="$METRICS",l1_shared_utilization,l2_utilization,tex_utilization,dram_utilization,sysmem_utilization;;
+		all)  METRICS="$METRICS",ldst_fu_utilization,alu_fu_utilization,cf_fu_utilization,tex_fu_utilization,l1_shared_utilization,l2_utilization,tex_utilization,dram_utilization,sysmem_utilization;;
+	    esac
+	done
+    fi
+}
+
+### Main ###
+
+TEMP=`getopt -o m:e:u::e:: -l metrics:,events:,utilization::,efficiency::,query-metrics,query-events -- "$@"`
+METRICS=""
+EVENTS=""
+PROG=""
+UTILIN=""
+EFFIN=""
+UTILVALID="TRUE"
+EFFVALID="TRUE"
+
+eval set -- "$TEMP"
+
+while true; do
+    case "$1" in 
+	--query-metrics)  # User wants the list of metrics
+	                  case "$2" in # check to see if user also asked for the list of events
+		              --query-events) nvprof --query-metrics --query-events;shift 2;; # Yes
+			      *)              nvprof --query-metrics;shift;; # No
+			  esac;;
+	--query-events)   # User wants the list of events
+	                  case "$2" in # Check to see if user also asked for the list of metrics
+			      --query-metrics) nvprof --query-events --query-metrics;shift 2;; # Yes
+			      *)               nvprof --query-events;shift;; # No
+			  esac;;
+	-m|--metrics)     shift;METRICS="$METRICS","$1";shift;; # User asked for metrics
+	-e|--events)      shift;EVENTS="$1";shift;; # User asked for events
+	-u|--utilization) # User asked for utilization, now check its input
+	                  IFS="," read -a opts <<< "$2" # String of options = Array of options 
+			  for option in "${opts[@]}" # For each option in the array
+			  do
+	                      case "$option" in 
+				  mem)  UTILIN="$UTILIN",mem;; # If mem -> save the option
+				  comp) UTILIN="$UTILIN",comp;; # If comp -> save the option
+				  all)  UTILIN=all;break;; # If all -> ignore any other options and save 'all'
+				  *)    echo "--utilization - The following is not an option : $option" # Wrong option
+				        UTILVALID="FALSE";break;;
+			      esac
+			  done
+			  if [ "$UTILVALID" = "FALSE" ]; then # If wrong option was given, don't continue
+			      break
+			  else
+	                      utilization "$UTILIN" # Run utilization function
+			      shift 2
+			  fi;;
+	-e|--efficiency)  
+	                  IFS="," read -a opts <<< "$2" # String of options = Array of options 
+			  for option in "${opts[@]}" # For each option in the array
+			  do
+	                      case "$option" in 
+				  gmem)  EFFIN="$EFFIN",gmem;; # If mem -> save the option
+				  smem)  EFFIN="$EFFIN",smem;; # If comp -> save the option
+				  wcomp) EFFIN="$EFFIN",wcomp;; # If wcomp -> save option
+				  tcomp) EFFIN="$EFFIN",tcomp;; # If tcomp -> save option
+				  all)   EFFIN=all;break;; # If all -> ignore any other options and save 'all'
+				  *)     echo "--efficiency - The following is not an option : $option" # Wrong option
+				         EFFVALID="FALSE";break;;
+			      esac
+			  done
+			  if [ "$EFFVALID" = "FALSE" ]; then # If wrong option was given, don't continue
+			      break
+			  else
+	                      efficiency "$EFFIN" # Run efficiency function
+			      shift 2
+			  fi;;
+	--)               shift;PROG="$@";break;;
+    esac
+done
+
+if [ -n "$PROG" ]; then # Program?
+    if [[ -z "$METRICS" && -z "$EVENTS" ]]; then # Nothing?
+	nvprof "$PROG"
+    elif [[ -n "$METRICS" && -z "$EVENTS" ]]; then # Metrics?  
+	nvprof --metrics "$METRICS" "$PROG"
+    elif [[ -z "$METRICS" && -n "$EVENTS" ]]; then # Events?
+	nvprof --events "$EVENTS" "$PROG"
+    elif [[ -n "$METRICS" && -n "$EVENTS" ]]; then # Metrics & Events?
+	nvprof --metrics "$METRICS" --events "$EVENTS" "$PROG"
+    fi
+fi
+
+exit 0
